@@ -413,6 +413,7 @@ def main():
 
         best_model = (eval_loss < best_loss)
         nsml.save(args.save_name)
+        nsml.save(str(epoch))
 
         if best_model:
             nsml.save('best')

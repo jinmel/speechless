@@ -1,4 +1,4 @@
-#nsml: nvcr.io/nvidia/pytorch:19.06-py3
+#nsml: w4jinsuk/pytorch-audio:latest
 from distutils.core import setup
 import setuptools
 
