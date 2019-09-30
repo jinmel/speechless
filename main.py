@@ -33,7 +33,7 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 import torch.optim as optim
-import Levenshtein as Lev 
+import Levenshtein as Lev
 
 import label_loader
 from loader import *
@@ -75,13 +75,13 @@ def label_to_string(labels):
         return sents
 
 def char_distance(ref, hyp):
-    ref = ref.replace(' ', '') 
-    hyp = hyp.replace(' ', '') 
+    ref = ref.replace(' ', '')
+    hyp = hyp.replace(' ', '')
 
     dist = Lev.distance(hyp, ref)
     length = len(ref.replace(' ', ''))
 
-    return dist, length 
+    return dist, length
 
 def get_distance(ref_labels, hyp_labels, display=False):
     total_dist = 0
@@ -91,7 +91,7 @@ def get_distance(ref_labels, hyp_labels, display=False):
         hyp = label_to_string(hyp_labels[i])
         dist, length = char_distance(ref, hyp)
         total_dist += dist
-        total_length += length 
+        total_length += length
         if display:
             cer = total_dist / total_length
             logger.debug('%d (%0.4f)\n(%s)\n(%s)' % (i, cer, ref, hyp))
@@ -284,7 +284,7 @@ def split_dataset(config, wav_paths, script_paths, valid_ratio=0.05):
                                         wav_paths[train_begin_raw_id:train_end_raw_id],
                                         script_paths[train_begin_raw_id:train_end_raw_id],
                                         SOS_token, EOS_token))
-        train_begin = train_end 
+        train_begin = train_end
 
     valid_dataset = BaseDataset(wav_paths[train_end_raw_id:], script_paths[train_end_raw_id:], SOS_token, EOS_token)
 
@@ -331,7 +331,7 @@ def main():
     device = torch.device('cuda' if args.cuda else 'cpu')
 
     # N_FFT: defined in loader.py
-    feature_size = N_FFT / 2 + 1
+    feature_size = N_MFCC
 
     enc = EncoderRNN(feature_size, args.hidden_size,
                      input_dropout_p=args.dropout, dropout_p=args.dropout,

@@ -24,6 +24,7 @@ import time
 import torch
 import random
 import threading
+import torchaudio
 import logging
 from torch.utils.data import Dataset, DataLoader
 
@@ -34,6 +35,7 @@ logger.setLevel(logging.INFO)
 
 PAD = 0
 N_FFT = 512
+N_MFCC = 40
 SAMPLE_RATE = 16000
 
 target_dict = dict()
@@ -45,24 +47,11 @@ def load_targets(path):
             target_dict[key] = target
 
 def get_spectrogram_feature(filepath):
-    (rate, width, sig) = wavio.readwav(filepath)
-    sig = sig.ravel()
-
-    stft = torch.stft(torch.FloatTensor(sig),
-                        N_FFT,
-                        hop_length=int(0.01*SAMPLE_RATE),
-                        win_length=int(0.030*SAMPLE_RATE),
-                        window=torch.hamming_window(int(0.030*SAMPLE_RATE)),
-                        center=False,
-                        normalized=False,
-                        onesided=True)
-
-    stft = (stft[:,:,0].pow(2) + stft[:,:,1].pow(2)).pow(0.5);
-    amag = stft.numpy();
-    feat = torch.FloatTensor(amag)
-    feat = torch.FloatTensor(feat).transpose(0, 1)
-
-    return feat
+    wavform, sample_rate = torchaudio.load_wav(filepath)
+    mfcc = torchaudio.transforms.MFCC(
+        sample_rate=sample_rate, n_mfcc=N_MFCC)(wavform)
+    mfcc = mfcc.reshape((mfcc.shape[2], mfcc.shape[1]))
+    return mfcc
 
 def get_script(filepath, bos_id, eos_id):
     key = filepath.split('/')[-1].split('.')[0]
@@ -153,7 +142,7 @@ class BaseDataLoader(threading.Thread):
         while True:
             items = list()
 
-            for i in range(self.batch_size): 
+            for i in range(self.batch_size):
                 if self.index >= self.dataset_count:
                     break
 
