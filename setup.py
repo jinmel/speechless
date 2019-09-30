@@ -7,6 +7,7 @@ setup(
     version='1.0',
     install_requires=[
         'python-Levenshtein',
-        'torchaudio'
+        'torchaudio',
+        'librosa'
     ]
 )

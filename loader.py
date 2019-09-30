@@ -24,8 +24,9 @@ import time
 import torch
 import random
 import threading
-import torchaudio
+import librosa
 import logging
+import numpy as np
 from torch.utils.data import Dataset, DataLoader
 
 logger = logging.getLogger('root')
@@ -47,11 +48,11 @@ def load_targets(path):
             target_dict[key] = target
 
 def get_spectrogram_feature(filepath):
-    wavform, sample_rate = torchaudio.load_wav(filepath)
-    mfcc = torchaudio.transforms.MFCC(
-        sample_rate=sample_rate, n_mfcc=N_MFCC)(wavform)
-    mfcc = mfcc.reshape((mfcc.shape[2], mfcc.shape[1]))
-    return mfcc
+    y, sr = librosa.load(filepath)
+    mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=N_MFCC)
+    mfcc_delta = librosa.feature.delta(mfcc)
+    mfcc_delta_delta = librosa.feature.delta(mfcc, order=2)
+    return np.concatenate((mfcc, mfcc_delta, mfcc_delta_delta), axis=0).T
 
 def get_script(filepath, bos_id, eos_id):
     key = filepath.split('/')[-1].split('.')[0]

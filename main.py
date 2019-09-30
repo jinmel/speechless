@@ -331,7 +331,7 @@ def main():
     device = torch.device('cuda' if args.cuda else 'cpu')
 
     # N_FFT: defined in loader.py
-    feature_size = N_MFCC
+    feature_size = N_MFCC * 3 # concat of mfcc, mfcc' mfcc''
 
     enc = EncoderRNN(feature_size, args.hidden_size,
                      input_dropout_p=args.dropout, dropout_p=args.dropout,
