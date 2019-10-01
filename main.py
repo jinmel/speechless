@@ -373,7 +373,7 @@ def main():
     target_dict = load_targets(target_path)
 
     train_batch_num, train_dataset_list, valid_dataset = split_dataset(
-        args, 300, wav_paths, script_paths, target_dict, valid_ratio=0.05)
+        args, 1, wav_paths, script_paths, target_dict, valid_ratio=0.05)
     logger.info('start')
 
     train_begin = time.time()

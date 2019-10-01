@@ -224,11 +224,13 @@ class JoblibLoader(threading.Thread):
                 jobs.append(
                     joblib.delayed(
                         get_batch_from_dataset)(dataset, i, self.batch_size))
-            batches = joblib.Parallel(n_jobs=self.worker_size)(jobs)
-            for batch in batches:
-                if batch[0].shape[0] != 0:
-                    self.queue.put(batch)
-                    total_batch += 1
+                if i % self.worker_size == 0:
+                    batches = joblib.Parallel(n_jobs=self.worker_size)(jobs)
+                    for batch in batches:
+                        if batch[0].shape[0] != 0:
+                            self.queue.put(batch)
+                            total_batch += 1
+                    jobs = []
 
         self.queue.put(create_empty_batch())
         logger.info('batches generated %d' % total_batch)
