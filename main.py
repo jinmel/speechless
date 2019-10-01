@@ -98,7 +98,8 @@ def get_distance(ref_labels, hyp_labels, display=False):
     return total_dist, total_length
 
 
-def train(model, total_batch_size, queue, criterion, optimizer, device, train_begin, train_loader_count, print_batch=5, teacher_forcing_ratio=1):
+def train(model, data_loader, criterion, optimizer, device,
+          train_begin, print_batch=5, teacher_forcing_ratio=1):
     total_loss = 0.
     total_num = 0
     total_dist = 0
@@ -108,19 +109,14 @@ def train(model, total_batch_size, queue, criterion, optimizer, device, train_be
 
     model.train()
 
+    total_batch_size = len(data_loader)
     logger.info('train() start')
 
     begin = epoch_begin = time.time()
 
-    while True:
-        if queue.empty():
-            logger.debug('queue is empty')
-
-        feats, scripts, feat_lengths, script_lengths = queue.get()
-        if feats.shape[0] == 0:
-            logger.info('No more batches')
-            break
-
+    for batch_index, batch in enumerate(data_loader):
+        feats, scripts, feat_lengths, script_lengths = batch
+        print(feats.shape)
         optimizer.zero_grad()
 
         feats = feats.to(device)
@@ -150,14 +146,14 @@ def train(model, total_batch_size, queue, criterion, optimizer, device, train_be
         loss.backward()
         optimizer.step()
 
-        if batch % print_batch == 0:
+        if batch_index % print_batch == 0:
             current = time.time()
             elapsed = current - begin
             epoch_elapsed = (current - epoch_begin) / 60.0
             train_elapsed = (current - train_begin) / 3600.0
 
             logger.info('batch: {:4d}/{:4d}, loss: {:.4f}, cer: {:.2f}, elapsed: {:.2f}s {:.2f}m {:.2f}h'
-                .format(batch,
+                .format(batch_index,
                         total_batch_size,
                         total_loss / total_num,
                         total_dist / total_length,
@@ -165,9 +161,10 @@ def train(model, total_batch_size, queue, criterion, optimizer, device, train_be
             begin = time.time()
 
             nsml.report(False,
-                        step=train.cumulative_batch_count, train_step__loss=total_loss/total_num,
+                        step=train.cumulative_batch_count,
+                        train_step__loss=total_loss/total_num,
                         train_step__cer=total_dist/total_length)
-        batch += 1
+
         train.cumulative_batch_count += 1
 
     logger.info('train() completed')
@@ -177,7 +174,7 @@ def train(model, total_batch_size, queue, criterion, optimizer, device, train_be
 train.cumulative_batch_count = 0
 
 
-def evaluate(model, dataloader, queue, criterion, device):
+def evaluate(model, dataloader, criterion, device):
     logger.info('evaluate() start')
     total_loss = 0.
     total_num = 0
@@ -188,11 +185,8 @@ def evaluate(model, dataloader, queue, criterion, device):
     model.eval()
 
     with torch.no_grad():
-        while True:
-            feats, scripts, feat_lengths, script_lengths = queue.get()
-            if feats.shape[0] == 0:
-                break
-
+        for batch_index, batch in enumerate(dataloader):
+            feats, scripts, feat_lengths, script_lengths = batch
             feats = feats.to(device)
             scripts = scripts.to(device)
 
@@ -250,37 +244,23 @@ def bind_model(model, optimizer=None):
 
     nsml.bind(save=save, load=load, infer=infer) # 'nsml.bind' function must be called at the end.
 
-def split_dataset(config, num_partition, wav_paths, script_paths, target_dict, valid_ratio=0.05):
+def split_dataset(config, wav_paths, script_paths, target_dict, valid_ratio=0.05):
     records_num = len(wav_paths)
     batch_num = math.ceil(records_num / config.batch_size)
 
     valid_batch_num = math.ceil(batch_num * valid_ratio)
     train_batch_num = batch_num - valid_batch_num
 
-    batch_num_per_train_loader = math.ceil(train_batch_num / num_partition)
+    split_index = train_batch_num * config.batch_size
 
-    train_begin = 0
-    train_end_raw_id = 0
-    train_dataset_list = list()
+    train_dataset = BaseDataset(wav_paths[:split_index],
+                                script_paths[:split_index],
+                                target_dict, SOS_token, EOS_token)
+    valid_dataset = BaseDataset(wav_paths[split_index:],
+                                script_paths[split_index:],
+                                target_dict, SOS_token, EOS_token)
 
-    for i in range(num_partition):
-
-        train_end = min(train_begin + batch_num_per_train_loader, train_batch_num)
-
-        train_begin_raw_id = train_begin * config.batch_size
-        train_end_raw_id = train_end * config.batch_size
-
-        train_dataset_list.append(BaseDataset(
-            wav_paths[train_begin_raw_id:train_end_raw_id],
-            script_paths[train_begin_raw_id:train_end_raw_id],
-            target_dict, SOS_token, EOS_token))
-        train_begin = train_end
-
-    valid_dataset = BaseDataset(
-        wav_paths[train_end_raw_id:], script_paths[train_end_raw_id:],
-        target_dict, SOS_token, EOS_token)
-
-    return train_batch_num, train_dataset_list, valid_dataset
+    return train_dataset, valid_dataset
 
 def main():
 
@@ -323,7 +303,7 @@ def main():
     device = torch.device('cuda' if args.cuda else 'cpu')
 
     # N_FFT: defined in loader.py
-    feature_size = N_MFCC * 3 # concat of mfcc, mfcc' mfcc''
+    feature_size = N_MFCC
 
     enc = EncoderRNN(feature_size, args.hidden_size,
                      input_dropout_p=args.dropout, dropout_p=args.dropout,
@@ -372,37 +352,28 @@ def main():
     target_path = os.path.join(DATASET_PATH, 'train_label')
     target_dict = load_targets(target_path)
 
-    train_batch_num, train_dataset_list, valid_dataset = split_dataset(
-        args, 1, wav_paths, script_paths, target_dict, valid_ratio=0.05)
-    logger.info('start')
+    train_dataset, valid_dataset = split_dataset(
+        args, wav_paths, script_paths, target_dict, valid_ratio=0.05)
 
     train_begin = time.time()
 
     for epoch in range(begin_epoch, args.max_epochs):
+        train_loader = torch.utils.data.DataLoader(
+            train_dataset, batch_size=args.batch_size, shuffle=True,
+            num_workers=args.workers, collate_fn=collate_fn)
 
-        train_queue = queue.Queue(30000)
-
-        train_loader = ConcurrentFuturesLoader(
-            train_dataset_list, train_queue, args.batch_size, args.workers)
-        logger.info('Start loader')
-        train_loader.start()
-        logger.info('Start train')
         train_loss, train_cer = train(
-            model, train_batch_num, train_queue, criterion, optimizer, device,
-            train_begin, 1, 10, args.teacher_forcing)
-
-        train_loader.join()
+            model, train_loader, criterion, optimizer, device,
+            train_begin, 10, args.teacher_forcing)
 
         logger.info('Epoch %d (Training) Loss %0.4f CER %0.4f' % (epoch, train_loss, train_cer))
 
-        valid_queue = queue.Queue(args.workers * 2)
-        valid_loader = BaseDataLoader(valid_dataset, valid_queue, args.batch_size, 0)
-        valid_loader.start()
+        valid_loader = torch.utils.data.DataLoader(
+            valid_dataset, batch_size=4, shuffle=False,
+            num_workers=args.workers, collate_fn=collate_fn)
 
-        eval_loss, eval_cer = evaluate(model, valid_loader, valid_queue, criterion, device)
+        eval_loss, eval_cer = evaluate(model, valid_loader, criterion, device)
         logger.info('Epoch %d (Evaluate) Loss %0.4f CER %0.4f' % (epoch, eval_loss, eval_cer))
-
-        valid_loader.join()
 
         nsml.report(False,
             step=epoch, train_epoch__loss=train_loss, train_epoch__cer=train_cer,

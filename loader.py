@@ -28,6 +28,7 @@ import threading
 import librosa
 import logging
 import numpy as np
+from torch.utils.data import Dataset
 
 logger = logging.getLogger('root')
 FORMAT = "[%(asctime)s %(filename)s:%(lineno)s - %(funcName)s()] %(message)s"
@@ -51,10 +52,11 @@ def load_targets(path):
 def get_spectrogram_feature(filepath):
     y, sr = librosa.load(filepath)
     mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=N_MFCC)
-    mfcc_delta = librosa.feature.delta(mfcc)
-    mfcc_delta_delta = librosa.feature.delta(mfcc, order=2)
-    result = np.concatenate((mfcc, mfcc_delta, mfcc_delta_delta), axis=0).T
-    return torch.Tensor(result)
+    # mfcc_delta = librosa.feature.delta(mfcc)
+    # mfcc_delta_delta = librosa.feature.delta(mfcc, order=2)
+    # result = np.concatenate((mfcc, mfcc_delta, mfcc_delta_delta), axis=0).T
+    result = mfcc.T
+    return torch.FloatTensor(result)
 
 def get_script(filepath, target_dict, bos_id, eos_id):
     key = filepath.split('/')[-1].split('.')[0]
@@ -68,7 +70,7 @@ def get_script(filepath, target_dict, bos_id, eos_id):
     result.append(eos_id)
     return result
 
-class BaseDataset(object):
+class BaseDataset(Dataset):
     def __init__(self, wav_paths, script_paths, target_dict, bos_id=1307, eos_id=1308):
         self.wav_paths = wav_paths
         self.script_paths = script_paths
@@ -77,6 +79,9 @@ class BaseDataset(object):
 
     def __len__(self):
         return len(self.wav_paths)
+
+    def __getitem__(self, index):
+        return self.getitem(index)
 
     def count(self):
         return len(self.wav_paths)
@@ -87,7 +92,7 @@ class BaseDataset(object):
                             self.bos_id, self.eos_id)
         return feat, script
 
-def _collate_fn(batch):
+def collate_fn(batch):
     def seq_length_(p):
         return len(p[0])
 
@@ -124,7 +129,7 @@ def _collate_fn(batch):
 class BaseDataLoader(threading.Thread):
     def __init__(self, dataset, queue, batch_size, thread_id):
         threading.Thread.__init__(self)
-        self.collate_fn = _collate_fn
+        self.collate_fn = collate_fn
         self.dataset = dataset
         self.queue = queue
         self.index = 0
@@ -203,7 +208,7 @@ def get_batch_from_dataset(dataset, start_index, batch_size):
         items.append(dataset.getitem(index))
 
     random.shuffle(items)
-    return _collate_fn(items)
+    return collate_fn(items)
 
 
 class ConcurrentFuturesLoader(threading.Thread):
