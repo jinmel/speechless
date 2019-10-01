@@ -116,7 +116,6 @@ def train(model, data_loader, criterion, optimizer, device,
 
     for batch_index, batch in enumerate(data_loader):
         feats, scripts, feat_lengths, script_lengths = batch
-        print(feats.shape)
         optimizer.zero_grad()
 
         feats = feats.to(device)

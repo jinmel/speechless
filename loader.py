@@ -29,11 +29,14 @@ import librosa
 import logging
 import numpy as np
 from torch.utils.data import Dataset
+from joblib import Memory
 
 logger = logging.getLogger('root')
 FORMAT = "[%(asctime)s %(filename)s:%(lineno)s - %(funcName)s()] %(message)s"
 logging.basicConfig(stream=sys.stdout, level=logging.DEBUG, format=FORMAT)
 logger.setLevel(logging.DEBUG)
+
+memory = Memory('./cachedir', verbose=0)
 
 PAD = 0
 N_FFT = 512
@@ -87,9 +90,11 @@ class BaseDataset(Dataset):
         return len(self.wav_paths)
 
     def getitem(self, idx):
-        feat = get_spectrogram_feature(self.wav_paths[idx])
-        script = get_script(self.script_paths[idx], self.target_dict,
-                            self.bos_id, self.eos_id)
+        get_spectrogram_feature_cache = memory.cache(get_spectrogram_feature)
+        get_script_cache = memory.cache(get_script)
+        feat = get_spectrogram_feature_cache(self.wav_paths[idx])
+        script = get_script_cache(self.script_paths[idx], self.target_dict,
+                                  self.bos_id, self.eos_id)
         return feat, script
 
 def collate_fn(batch):
