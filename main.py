@@ -115,19 +115,9 @@ def train(model, total_batch_size, queue, criterion, optimizer, device, train_be
     while True:
         if queue.empty():
             logger.debug('queue is empty')
+            break
 
         feats, scripts, feat_lengths, script_lengths = queue.get()
-
-        if feats.shape[0] == 0:
-            # empty feats means closing one loader
-            train_loader_count -= 1
-
-            logger.debug('left train_loader: %d' % (train_loader_count))
-
-            if train_loader_count == 0:
-                break
-            else:
-                continue
 
         optimizer.zero_grad()
 
@@ -166,7 +156,6 @@ def train(model, total_batch_size, queue, criterion, optimizer, device, train_be
 
             logger.info('batch: {:4d}/{:4d}, loss: {:.4f}, cer: {:.2f}, elapsed: {:.2f}s {:.2f}m {:.2f}h'
                 .format(batch,
-                        #len(dataloader),
                         total_batch_size,
                         total_loss / total_num,
                         total_dist / total_length,
@@ -259,7 +248,7 @@ def bind_model(model, optimizer=None):
 
     nsml.bind(save=save, load=load, infer=infer) # 'nsml.bind' function must be called at the end.
 
-def split_dataset(config, wav_paths, script_paths, valid_ratio=0.05):
+def split_dataset(config, wav_paths, script_paths, target_dict, valid_ratio=0.05):
     train_loader_count = config.workers
     records_num = len(wav_paths)
     batch_num = math.ceil(records_num / config.batch_size)
@@ -281,12 +270,14 @@ def split_dataset(config, wav_paths, script_paths, valid_ratio=0.05):
         train_end_raw_id = train_end * config.batch_size
 
         train_dataset_list.append(BaseDataset(
-                                        wav_paths[train_begin_raw_id:train_end_raw_id],
-                                        script_paths[train_begin_raw_id:train_end_raw_id],
-                                        SOS_token, EOS_token))
+            wav_paths[train_begin_raw_id:train_end_raw_id],
+            script_paths[train_begin_raw_id:train_end_raw_id],
+            target_dict, SOS_token, EOS_token))
         train_begin = train_end
 
-    valid_dataset = BaseDataset(wav_paths[train_end_raw_id:], script_paths[train_end_raw_id:], SOS_token, EOS_token)
+    valid_dataset = BaseDataset(
+        wav_paths[train_end_raw_id:], script_paths[train_end_raw_id:],
+        target_dict, SOS_token, EOS_token)
 
     return train_batch_num, train_dataset_list, valid_dataset
 
@@ -378,25 +369,26 @@ def main():
 
     # load all target scripts for reducing disk i/o
     target_path = os.path.join(DATASET_PATH, 'train_label')
-    load_targets(target_path)
+    target_dict = load_targets(target_path)
 
-    train_batch_num, train_dataset_list, valid_dataset = split_dataset(args, wav_paths, script_paths, valid_ratio=0.05)
-
+    train_batch_num, train_dataset_list, valid_dataset = split_dataset(
+        args, wav_paths, script_paths, target_dict, valid_ratio=0.05)
     logger.info('start')
 
     train_begin = time.time()
 
     for epoch in range(begin_epoch, args.max_epochs):
 
-        train_queue = queue.Queue(args.workers * 2)
+        train_queue = queue.Queue(100000)
 
-        train_loader = MultiLoader(train_dataset_list, train_queue, args.batch_size, args.workers)
+        train_loader = JoblibLoader(
+            train_dataset_list, train_queue, args.batch_size, args.workers)
         train_loader.start()
 
-        train_loss, train_cer = train(model, train_batch_num, train_queue, criterion, optimizer, device, train_begin, args.workers, 10, args.teacher_forcing)
+        train_loss, train_cer = train(
+            model, train_batch_num, train_queue, criterion, optimizer, device,
+            train_begin, 1, 10, args.teacher_forcing)
         logger.info('Epoch %d (Training) Loss %0.4f CER %0.4f' % (epoch, train_loss, train_cer))
-
-        train_loader.join()
 
         valid_queue = queue.Queue(args.workers * 2)
         valid_loader = BaseDataLoader(valid_dataset, valid_queue, args.batch_size, 0)

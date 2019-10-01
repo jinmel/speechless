@@ -27,25 +27,27 @@ import threading
 import librosa
 import logging
 import numpy as np
+import joblib
 from torch.utils.data import Dataset, DataLoader
 
 logger = logging.getLogger('root')
 FORMAT = "[%(asctime)s %(filename)s:%(lineno)s - %(funcName)s()] %(message)s"
 logging.basicConfig(stream=sys.stdout, level=logging.DEBUG, format=FORMAT)
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.DEBUG)
 
 PAD = 0
 N_FFT = 512
 N_MFCC = 40
 SAMPLE_RATE = 16000
 
-target_dict = dict()
 
 def load_targets(path):
+    target_dict = dict()
     with open(path, 'r') as f:
         for no, line in enumerate(f):
             key, target = line.strip().split(',')
             target_dict[key] = target
+    return target_dict
 
 def get_spectrogram_feature(filepath):
     y, sr = librosa.load(filepath)
@@ -55,7 +57,7 @@ def get_spectrogram_feature(filepath):
     result = np.concatenate((mfcc, mfcc_delta, mfcc_delta_delta), axis=0).T
     return torch.Tensor(result)
 
-def get_script(filepath, bos_id, eos_id):
+def get_script(filepath, target_dict, bos_id, eos_id):
     key = filepath.split('/')[-1].split('.')[0]
     script = target_dict[key]
     tokens = script.split(' ')
@@ -68,9 +70,10 @@ def get_script(filepath, bos_id, eos_id):
     return result
 
 class BaseDataset(Dataset):
-    def __init__(self, wav_paths, script_paths, bos_id=1307, eos_id=1308):
+    def __init__(self, wav_paths, script_paths, target_dict, bos_id=1307, eos_id=1308):
         self.wav_paths = wav_paths
         self.script_paths = script_paths
+        self.target_dict = target_dict
         self.bos_id, self.eos_id = bos_id, eos_id
 
     def __len__(self):
@@ -81,7 +84,8 @@ class BaseDataset(Dataset):
 
     def getitem(self, idx):
         feat = get_spectrogram_feature(self.wav_paths[idx])
-        script = get_script(self.script_paths[idx], self.bos_id, self.eos_id)
+        script = get_script(self.script_paths[idx], self.target_dict,
+                            self.bos_id, self.eos_id)
         return feat, script
 
 def _collate_fn(batch):
@@ -141,6 +145,9 @@ class BaseDataLoader(threading.Thread):
 
     def run(self):
         logger.debug('loader %d start' % (self.thread_id))
+        def _get_item(dataset, index):
+            return dataset.getitem(index)
+
         while True:
             items = list()
 
@@ -181,3 +188,45 @@ class MultiLoader():
         for i in range(self.worker_size):
             self.loader[i].join()
 
+
+def create_empty_batch():
+    seqs = torch.zeros(0, 0, 0)
+    targets = torch.zeros(0, 0).to(torch.long)
+    seq_lengths = list()
+    target_lengths = list()
+    return seqs, targets, seq_lengths, target_lengths
+
+
+def get_batch_from_dataset(dataset, start_index, batch_size):
+    items = list()
+    end_index = min(start_index + batch_size, dataset.count())
+    for index in range(start_index, end_index):
+        items.append(dataset.getitem(index))
+
+    random.shuffle(items)
+    return _collate_fn(items)
+
+
+class JoblibLoader():
+    def __init__(self, dataset_list, queue, batch_size, worker_size):
+        self.dataset_list = dataset_list
+        self.queue = queue
+        self.batch_size = batch_size
+        self.worker_size = worker_size
+
+    def start(self):
+        logger.info('Begin generating batches.')
+        total_batch = 0
+        for dataset in self.dataset_list:
+            jobs = []
+            for i in range(0, dataset.count(), self.batch_size):
+                jobs.append(
+                    joblib.delayed(
+                        get_batch_from_dataset)(dataset, i, self.batch_size))
+            batches = joblib.Parallel(n_jobs=self.worker_size, verbose=50)(jobs)
+            for batch in batches:
+                if batch[0].shape[0] != 0:
+                    self.queue.put(batch)
+                    total_batch += 1
+        logger.info('batches generated %d' % total_batch)
+        logger.info('End generating batches.')
