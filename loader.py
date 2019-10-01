@@ -16,6 +16,7 @@ limitations under the License.
 
 #-*- coding: utf-8 -*-
 
+import concurrent
 import os
 import sys
 import math
@@ -27,8 +28,6 @@ import threading
 import librosa
 import logging
 import numpy as np
-import joblib
-from torch.utils.data import Dataset, DataLoader
 
 logger = logging.getLogger('root')
 FORMAT = "[%(asctime)s %(filename)s:%(lineno)s - %(funcName)s()] %(message)s"
@@ -69,7 +68,7 @@ def get_script(filepath, target_dict, bos_id, eos_id):
     result.append(eos_id)
     return result
 
-class BaseDataset(Dataset):
+class BaseDataset(object):
     def __init__(self, wav_paths, script_paths, target_dict, bos_id=1307, eos_id=1308):
         self.wav_paths = wav_paths
         self.script_paths = script_paths
@@ -207,7 +206,7 @@ def get_batch_from_dataset(dataset, start_index, batch_size):
     return _collate_fn(items)
 
 
-class JoblibLoader(threading.Thread):
+class ConcurrentFuturesLoader(threading.Thread):
     def __init__(self, dataset_list, queue, batch_size, worker_size):
         threading.Thread.__init__(self)
         self.dataset_list = dataset_list
@@ -218,20 +217,22 @@ class JoblibLoader(threading.Thread):
     def run(self):
         logger.info('Begin generating batches.')
         total_batch = 0
+        futures = []
+        executor = concurrent.futures.ProcessPoolExecutor(
+            max_workers=self.worker_size)
+
         for dataset in self.dataset_list:
-            jobs = []
             for i in range(0, dataset.count(), self.batch_size):
-                jobs.append(
-                    joblib.delayed(
-                        get_batch_from_dataset)(dataset, i, self.batch_size))
-                if i % self.worker_size == 0:
-                    batches = joblib.Parallel(n_jobs=self.worker_size)(jobs)
-                    for batch in batches:
-                        if batch[0].shape[0] != 0:
-                            self.queue.put(batch)
-                            total_batch += 1
-                    jobs = []
+                futures.append(executor.submit(get_batch_from_dataset,
+                                               dataset, i, self.batch_size))
+        for future in concurrent.futures.as_completed(futures):
+            try:
+                batch = future.result()
+                self.queue.put(batch)
+                total_batch += 1
+            except Exception as error:
+                logger.info(error)
 
         self.queue.put(create_empty_batch())
-        logger.info('batches generated %d' % total_batch)
+        logger.info('%d batches generated' % total_batch)
         logger.info('End generating batches.')

@@ -380,9 +380,9 @@ def main():
 
     for epoch in range(begin_epoch, args.max_epochs):
 
-        train_queue = queue.Queue(10)
+        train_queue = queue.Queue(30000)
 
-        train_loader = JoblibLoader(
+        train_loader = ConcurrentFuturesLoader(
             train_dataset_list, train_queue, args.batch_size, args.workers)
         logger.info('Start loader')
         train_loader.start()
