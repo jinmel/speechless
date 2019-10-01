@@ -207,14 +207,15 @@ def get_batch_from_dataset(dataset, start_index, batch_size):
     return _collate_fn(items)
 
 
-class JoblibLoader():
+class JoblibLoader(threading.Thread):
     def __init__(self, dataset_list, queue, batch_size, worker_size):
+        threading.Thread.__init__(self)
         self.dataset_list = dataset_list
         self.queue = queue
         self.batch_size = batch_size
         self.worker_size = worker_size
 
-    def start(self):
+    def run(self):
         logger.info('Begin generating batches.')
         total_batch = 0
         for dataset in self.dataset_list:
@@ -223,10 +224,12 @@ class JoblibLoader():
                 jobs.append(
                     joblib.delayed(
                         get_batch_from_dataset)(dataset, i, self.batch_size))
-            batches = joblib.Parallel(n_jobs=self.worker_size, verbose=50)(jobs)
+            batches = joblib.Parallel(n_jobs=self.worker_size)(jobs)
             for batch in batches:
                 if batch[0].shape[0] != 0:
                     self.queue.put(batch)
                     total_batch += 1
+
+        self.queue.put(create_empty_batch())
         logger.info('batches generated %d' % total_batch)
         logger.info('End generating batches.')

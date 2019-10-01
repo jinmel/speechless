@@ -115,9 +115,11 @@ def train(model, total_batch_size, queue, criterion, optimizer, device, train_be
     while True:
         if queue.empty():
             logger.debug('queue is empty')
-            break
 
         feats, scripts, feat_lengths, script_lengths = queue.get()
+        if feats.shape[0] == 0:
+            logger.info('No more batches')
+            break
 
         optimizer.zero_grad()
 
@@ -379,15 +381,19 @@ def main():
 
     for epoch in range(begin_epoch, args.max_epochs):
 
-        train_queue = queue.Queue(100000)
+        train_queue = queue.Queue(10)
 
         train_loader = JoblibLoader(
             train_dataset_list, train_queue, args.batch_size, args.workers)
+        logger.info('Start loader')
         train_loader.start()
-
+        logger.info('Start train')
         train_loss, train_cer = train(
             model, train_batch_num, train_queue, criterion, optimizer, device,
             train_begin, 1, 10, args.teacher_forcing)
+
+        train_loader.join()
+
         logger.info('Epoch %d (Training) Loss %0.4f CER %0.4f' % (epoch, train_loss, train_cer))
 
         valid_queue = queue.Queue(args.workers * 2)
