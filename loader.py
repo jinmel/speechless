@@ -36,7 +36,7 @@ FORMAT = "[%(asctime)s %(filename)s:%(lineno)s - %(funcName)s()] %(message)s"
 logging.basicConfig(stream=sys.stdout, level=logging.DEBUG, format=FORMAT)
 logger.setLevel(logging.DEBUG)
 
-memory = Memory('./cachedir', verbose=0)
+memory = Memory('./cache', verbose=0)
 
 PAD = 0
 N_FFT = 512
@@ -61,9 +61,7 @@ def get_spectrogram_feature(filepath):
     result = mfcc.T
     return torch.FloatTensor(result)
 
-def get_script(filepath, target_dict, bos_id, eos_id):
-    key = filepath.split('/')[-1].split('.')[0]
-    script = target_dict[key]
+def get_script(script, bos_id, eos_id):
     tokens = script.split(' ')
     result = list()
     result.append(bos_id)
@@ -92,8 +90,11 @@ class BaseDataset(Dataset):
     def getitem(self, idx):
         get_spectrogram_feature_cache = memory.cache(get_spectrogram_feature)
         get_script_cache = memory.cache(get_script)
+
         feat = get_spectrogram_feature_cache(self.wav_paths[idx])
-        script = get_script_cache(self.script_paths[idx], self.target_dict,
+
+        key = self.script_paths[idx].split('/')[-1].split('.')[0]
+        script = get_script_cache(self.target_dict[key],
                                   self.bos_id, self.eos_id)
         return feat, script
 
