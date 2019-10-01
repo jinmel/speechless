@@ -52,7 +52,8 @@ def get_spectrogram_feature(filepath):
     mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=N_MFCC)
     mfcc_delta = librosa.feature.delta(mfcc)
     mfcc_delta_delta = librosa.feature.delta(mfcc, order=2)
-    return np.concatenate((mfcc, mfcc_delta, mfcc_delta_delta), axis=0).T
+    result =  np.concatenate((mfcc, mfcc_delta, mfcc_delta_delta), axis=0).T
+    return torch.Tensor(result)
 
 def get_script(filepath, bos_id, eos_id):
     key = filepath.split('/')[-1].split('.')[0]
