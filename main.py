@@ -250,21 +250,20 @@ def bind_model(model, optimizer=None):
 
     nsml.bind(save=save, load=load, infer=infer) # 'nsml.bind' function must be called at the end.
 
-def split_dataset(config, wav_paths, script_paths, target_dict, valid_ratio=0.05):
-    train_loader_count = config.workers
+def split_dataset(config, num_partition, wav_paths, script_paths, target_dict, valid_ratio=0.05):
     records_num = len(wav_paths)
     batch_num = math.ceil(records_num / config.batch_size)
 
     valid_batch_num = math.ceil(batch_num * valid_ratio)
     train_batch_num = batch_num - valid_batch_num
 
-    batch_num_per_train_loader = math.ceil(train_batch_num / config.workers)
+    batch_num_per_train_loader = math.ceil(train_batch_num / num_partition)
 
     train_begin = 0
     train_end_raw_id = 0
     train_dataset_list = list()
 
-    for i in range(config.workers):
+    for i in range(num_partition):
 
         train_end = min(train_begin + batch_num_per_train_loader, train_batch_num)
 
@@ -374,7 +373,7 @@ def main():
     target_dict = load_targets(target_path)
 
     train_batch_num, train_dataset_list, valid_dataset = split_dataset(
-        args, wav_paths, script_paths, target_dict, valid_ratio=0.05)
+        args, 300, wav_paths, script_paths, target_dict, valid_ratio=0.05)
     logger.info('start')
 
     train_begin = time.time()
