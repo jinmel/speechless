@@ -30,6 +30,7 @@ import logging
 import numpy as np
 from torch.utils.data import Dataset
 from joblib import Memory
+import tempfile
 
 logger = logging.getLogger('root')
 FORMAT = "[%(asctime)s %(filename)s:%(lineno)s - %(funcName)s()] %(message)s"
@@ -39,10 +40,44 @@ logger.setLevel(logging.DEBUG)
 memory = Memory('./cache.%d' % int(time.time()), verbose=0)
 
 PAD = 0
-N_FFT = 512
+N_FFT = 320
 N_MFCC = 40
+N_MELS = 80
 SAMPLE_RATE = 16000
 
+def augment_audio_with_sox(path, sample_rate, tempo, gain):
+    """
+    Changes tempo and gain of the recording with sox and loads it.
+    """
+    with tempfile.NamedTemporaryFile(suffix=".wav") as augmented_file:
+        augmented_filename = augmented_file.name
+        sox_augment_params = ["tempo", "{:.3f}".format(tempo), "gain", "{:.3f}".format(gain)]
+        sox_params = "sox \"{}\" -r {} -c 1 -b 16 -e si {} {} >/dev/null 2>&1".format(path, sample_rate,
+                                                                                      augmented_filename,
+                                                                                      " ".join(sox_augment_params))
+        os.system(sox_params)
+        y, _ = librosa.load(augmented_filename)
+        return y
+
+def load_randomly_augmented_audio(path, sample_rate=16000, tempo_range=(0.85, 1.15),
+                                  gain_range=(-6, 8)):
+    """
+    Picks tempo and gain uniformly, applies it to the utterance by using sox utility.
+    Returns the augmented utterance.
+    """
+    low_tempo, high_tempo = tempo_range
+    tempo_value = np.random.uniform(low=low_tempo, high=high_tempo)
+    low_gain, high_gain = gain_range
+    gain_value = np.random.uniform(low=low_gain, high=high_gain)
+    audio = augment_audio_with_sox(path=path, sample_rate=sample_rate,
+                                   tempo=tempo_value, gain=gain_value)
+    return audio
+
+def load_audio(path):
+    if random.uniform(0, 1) > 0.6:
+        return librosa.load(path)
+
+    return load_randomly_augmented_audio(path), SAMPLE_RATE
 
 def load_targets(path):
     target_dict = dict()
@@ -52,13 +87,37 @@ def load_targets(path):
             target_dict[key] = target
     return target_dict
 
-def get_spectrogram_feature(filepath):
-    y, sr = librosa.load(filepath)
+def get_mfcc_feature(filepath, normalize=False):
+    y, sr = load_audio(filepath)
     mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=N_MFCC)
     mfcc_delta = librosa.feature.delta(mfcc)
     mfcc_delta_delta = librosa.feature.delta(mfcc, order=2)
     result = np.concatenate((mfcc, mfcc_delta, mfcc_delta_delta), axis=0).T
     return torch.FloatTensor(result)
+
+def get_mel_spectrogram_feature(filepath, normalize=False):
+    y, sr = load_audio(filepath)
+    mel_spec = librosa.feature.melspectrogram(y=y, sr=sr, n_mels=N_MELS,
+                                              n_fft=N_FFT,
+                                              win_length=int(N_FFT),
+                                              hop_length=int(0.01*SAMPLE_RATE),
+                                              center=False,
+                                              window='hamming')
+    return torch.FloatTensor(mel_spec.T)
+
+def get_spectrogram_feature(filepath, normalize=False):
+    y, sr = load_audio(filepath)
+    D = librosa.stft(y, n_fft=N_FFT, hop_length=int(0.01*SAMPLE_RATE),
+                     win_length=int(N_FFT), window='hamming')
+    spect, phase = librosa.magphase(D)
+    spect = np.log1p(spect)
+    spect = torch.FloatTensor(spect)
+    if normalize:
+        mean = spect.mean()
+        std = spect.std()
+        spect.add_(-mean)
+        spect.div_(std)
+    return spect.T
 
 def get_script(script, bos_id, eos_id):
     tokens = script.split(' ')
@@ -71,11 +130,14 @@ def get_script(script, bos_id, eos_id):
     return result
 
 class BaseDataset(Dataset):
-    def __init__(self, wav_paths, script_paths, target_dict, bos_id=1307, eos_id=1308):
+    def __init__(self, wav_paths, script_paths, target_dict, feature='mfcc', bos_id=1307, eos_id=1308,
+                 normalize=True):
         self.wav_paths = wav_paths
         self.script_paths = script_paths
         self.target_dict = target_dict
         self.bos_id, self.eos_id = bos_id, eos_id
+        self.feature = feature
+        self.normalize = normalize
 
     def __len__(self):
         return len(self.wav_paths)
@@ -87,10 +149,17 @@ class BaseDataset(Dataset):
         return len(self.wav_paths)
 
     def getitem(self, idx):
-        get_spectrogram_feature_cache = memory.cache(get_spectrogram_feature)
-        get_script_cache = memory.cache(get_script)
+        if self.feature == 'mfcc':
+            get_feature = memory.cache(get_mfcc_feature)
+        elif self.feature == 'melspec':
+            get_feature = memory.cache(get_mel_spectrogram_feature)
+        elif self.feature == 'spec':
+            get_feature = memory.cache(get_spectrogram_feature)
+        else:
+            raise ValueError('Unsupported feature: %s' % self.feature)
 
-        feat = get_spectrogram_feature_cache(self.wav_paths[idx])
+        get_script_cache = memory.cache(get_script)
+        feat = get_feature(self.wav_paths[idx], self.normalize)
 
         key = self.script_paths[idx].split('/')[-1].split('.')[0]
         script = get_script_cache(self.target_dict[key],

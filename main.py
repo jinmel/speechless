@@ -243,7 +243,7 @@ def bind_model(model, optimizer=None):
 
     nsml.bind(save=save, load=load, infer=infer) # 'nsml.bind' function must be called at the end.
 
-def split_dataset(config, wav_paths, script_paths, target_dict, valid_ratio=0.05):
+def split_dataset(config, wav_paths, script_paths, target_dict, feature, valid_ratio=0.05):
     records_num = len(wav_paths)
     batch_num = math.ceil(records_num / config.batch_size)
 
@@ -254,10 +254,10 @@ def split_dataset(config, wav_paths, script_paths, target_dict, valid_ratio=0.05
 
     train_dataset = BaseDataset(wav_paths[:split_index],
                                 script_paths[:split_index],
-                                target_dict, SOS_token, EOS_token)
+                                target_dict, feature, SOS_token, EOS_token)
     valid_dataset = BaseDataset(wav_paths[split_index:],
                                 script_paths[split_index:],
-                                target_dict, SOS_token, EOS_token)
+                                target_dict, feature, SOS_token, EOS_token)
 
     return train_dataset, valid_dataset
 
@@ -288,6 +288,7 @@ def main():
     parser.add_argument("--pause", type=int, default=0)
     parser.add_argument('--rnn_cell', type=str, default='gru')
     parser.add_argument("--iteration", type=int, default=0)
+    parser.add_argument('--feature', type=str, default='mfcc')
 
     args = parser.parse_args()
 
@@ -303,8 +304,17 @@ def main():
     args.cuda = not args.no_cuda and torch.cuda.is_available()
     device = torch.device('cuda' if args.cuda else 'cpu')
 
+    logger.info('Using %s as feature' % args.feature)
+
     # N_FFT: defined in loader.py
-    feature_size = N_MFCC * 3
+    if args.feature == 'mfcc':
+        feature_size = N_MFCC * 3 # concat of mfcc, mfcc' mfcc''
+    elif args.feature == 'melspec':
+        feature_size = N_MELS
+    elif args.feature == 'spec':
+        feature_size = N_FFT / 2 + 1
+    else:
+        raise ValueError('Unsupported feature %s' % args.feature)
 
     enc = EncoderRNN(feature_size, args.hidden_size,
                      input_dropout_p=args.dropout, dropout_p=args.dropout,
@@ -354,7 +364,7 @@ def main():
     target_dict = load_targets(target_path)
 
     train_dataset, valid_dataset = split_dataset(
-        args, wav_paths, script_paths, target_dict, valid_ratio=0.05)
+        args, wav_paths, script_paths, target_dict, args.feature, valid_ratio=0.05)
 
     train_begin = time.time()
 
