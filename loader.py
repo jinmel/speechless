@@ -31,19 +31,25 @@ import numpy as np
 from torch.utils.data import Dataset
 from joblib import Memory
 import tempfile
+import shutil
 
 logger = logging.getLogger('root')
 FORMAT = "[%(asctime)s %(filename)s:%(lineno)s - %(funcName)s()] %(message)s"
 logging.basicConfig(stream=sys.stdout, level=logging.DEBUG, format=FORMAT)
 logger.setLevel(logging.DEBUG)
 
-memory = Memory('./cache.%d' % int(time.time()), verbose=0)
+CACHE_DIR = './cache.%d' % int(time.time())
+memory = Memory(CACHE_DIR, verbose=0)
 
 PAD = 0
 N_FFT = 320
 N_MFCC = 40
 N_MELS = 80
 SAMPLE_RATE = 16000
+
+def clear_joblib_cache():
+    logger.info('Clear Joblib cache at: %s' % CACHE_DIR)
+    shutil.rmtree(CACHE_DIR)
 
 def augment_audio_with_sox(path, sample_rate, tempo, gain):
     """
@@ -59,8 +65,8 @@ def augment_audio_with_sox(path, sample_rate, tempo, gain):
         y, _ = librosa.load(augmented_filename)
         return y
 
-def load_randomly_augmented_audio(path, sample_rate=16000, tempo_range=(0.85, 1.15),
-                                  gain_range=(-6, 8)):
+def load_randomly_augmented_audio(path, sample_rate=SAMPLE_RATE,
+                                  tempo_range=(0.85, 1.15), gain_range=(-6, 8)):
     """
     Picks tempo and gain uniformly, applies it to the utterance by using sox utility.
     Returns the augmented utterance.
@@ -74,9 +80,6 @@ def load_randomly_augmented_audio(path, sample_rate=16000, tempo_range=(0.85, 1.
     return audio
 
 def load_audio(path):
-    if random.uniform(0, 1) > 0.6:
-        return librosa.load(path)
-
     return load_randomly_augmented_audio(path), SAMPLE_RATE
 
 def load_targets(path):
@@ -87,7 +90,7 @@ def load_targets(path):
             target_dict[key] = target
     return target_dict
 
-def get_mfcc_feature(filepath, normalize=False):
+def get_mfcc_feature(filepath):
     y, sr = load_audio(filepath)
     mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=N_MFCC)
     mfcc_delta = librosa.feature.delta(mfcc)
@@ -95,7 +98,7 @@ def get_mfcc_feature(filepath, normalize=False):
     result = np.concatenate((mfcc, mfcc_delta, mfcc_delta_delta), axis=0).T
     return torch.FloatTensor(result)
 
-def get_mel_spectrogram_feature(filepath, normalize=False):
+def get_mel_spectrogram_feature(filepath):
     y, sr = load_audio(filepath)
     mel_spec = librosa.feature.melspectrogram(y=y, sr=sr, n_mels=N_MELS,
                                               n_fft=N_FFT,
@@ -105,19 +108,21 @@ def get_mel_spectrogram_feature(filepath, normalize=False):
                                               window='hamming')
     return torch.FloatTensor(mel_spec.T)
 
-def get_spectrogram_feature(filepath, normalize=False):
+def get_spectrogram_feature(filepath):
     y, sr = load_audio(filepath)
     D = librosa.stft(y, n_fft=N_FFT, hop_length=int(0.01*SAMPLE_RATE),
                      win_length=int(N_FFT), window='hamming')
     spect, phase = librosa.magphase(D)
     spect = np.log1p(spect)
     spect = torch.FloatTensor(spect)
-    if normalize:
-        mean = spect.mean()
-        std = spect.std()
-        spect.add_(-mean)
-        spect.div_(std)
     return spect.T
+
+def normalize_feature(feature):
+    mean = feature.mean()
+    std = feature.std()
+    feature.add_(-mean)
+    feature.div_(std)
+    return feature
 
 def get_script(script, bos_id, eos_id):
     tokens = script.split(' ')
@@ -130,8 +135,8 @@ def get_script(script, bos_id, eos_id):
     return result
 
 class BaseDataset(Dataset):
-    def __init__(self, wav_paths, script_paths, target_dict, feature='mfcc', bos_id=1307, eos_id=1308,
-                 normalize=True):
+    def __init__(self, wav_paths, script_paths, target_dict, feature='spec',
+                 bos_id=1307, eos_id=1308, normalize=True):
         self.wav_paths = wav_paths
         self.script_paths = script_paths
         self.target_dict = target_dict
@@ -148,19 +153,24 @@ class BaseDataset(Dataset):
     def count(self):
         return len(self.wav_paths)
 
-    def getitem(self, idx):
+    def get_feature_func(self):
         if self.feature == 'mfcc':
-            get_feature = memory.cache(get_mfcc_feature)
+            get_feature = get_mfcc_feature
         elif self.feature == 'melspec':
-            get_feature = memory.cache(get_mel_spectrogram_feature)
+            get_feature = get_mel_spectrogram_feature
         elif self.feature == 'spec':
-            get_feature = memory.cache(get_spectrogram_feature)
+            get_feature = get_spectrogram_feature
         else:
             raise ValueError('Unsupported feature: %s' % self.feature)
 
-        get_script_cache = memory.cache(get_script)
-        feat = get_feature(self.wav_paths[idx], self.normalize)
+        return memory.cache(get_feature)
 
+    def getitem(self, idx):
+        get_feature = self.get_feature_func()
+        get_script_cache = memory.cache(get_script)
+        feat = get_feature(self.wav_paths[idx])
+        if self.normalize:
+            feat = normalize_feature(feat)
         key = self.script_paths[idx].split('/')[-1].split('.')[0]
         script = get_script_cache(self.target_dict[key],
                                   self.bos_id, self.eos_id)

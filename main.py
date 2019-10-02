@@ -337,6 +337,7 @@ def main():
     criterion = nn.CrossEntropyLoss(reduction='sum', ignore_index=PAD_token).to(device)
 
     bind_model(model, optimizer)
+    # nsml.load(checkpoint='best', session='team236/sr-hack-2019-dataset/114')
 
     if args.pause == 1:
         nsml.paused(scope=locals())
@@ -397,6 +398,10 @@ def main():
         if best_model:
             nsml.save('best')
             best_loss = eval_loss
+
+        if (epoch + 1) % 5 == 0:
+            clear_joblib_cache()
+
 
 if __name__ == "__main__":
     main()
