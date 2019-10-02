@@ -286,6 +286,8 @@ def main():
     parser.add_argument('--save_name', type=str, default='model', help='the name of model in nsml or local')
     parser.add_argument('--mode', type=str, default='train')
     parser.add_argument("--pause", type=int, default=0)
+    parser.add_argument('--rnn_cell', type=str, default='gru')
+    parser.add_argument("--iteration", type=int, default=0)
 
     args = parser.parse_args()
 
@@ -302,15 +304,15 @@ def main():
     device = torch.device('cuda' if args.cuda else 'cpu')
 
     # N_FFT: defined in loader.py
-    feature_size = N_MFCC
+    feature_size = N_MFCC * 3
 
     enc = EncoderRNN(feature_size, args.hidden_size,
                      input_dropout_p=args.dropout, dropout_p=args.dropout,
-                     n_layers=args.layer_size, bidirectional=args.bidirectional, rnn_cell='gru', variable_lengths=False)
+                     n_layers=args.layer_size, bidirectional=args.bidirectional, rnn_cell=args.rnn_cell, variable_lengths=False)
 
     dec = DecoderRNN(len(char2index), args.max_len, args.hidden_size * (2 if args.bidirectional else 1),
                      SOS_token, EOS_token,
-                     n_layers=args.layer_size, rnn_cell='gru', bidirectional=args.bidirectional,
+                     n_layers=args.layer_size, rnn_cell=args.rnn_cell, bidirectional=args.bidirectional,
                      input_dropout_p=args.dropout, dropout_p=args.dropout, use_attention=args.use_attention)
 
     model = Seq2seq(enc, dec)

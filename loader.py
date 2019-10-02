@@ -36,7 +36,7 @@ FORMAT = "[%(asctime)s %(filename)s:%(lineno)s - %(funcName)s()] %(message)s"
 logging.basicConfig(stream=sys.stdout, level=logging.DEBUG, format=FORMAT)
 logger.setLevel(logging.DEBUG)
 
-memory = Memory('./cache', verbose=0)
+memory = Memory('./cache.%d' % int(time.time()), verbose=0)
 
 PAD = 0
 N_FFT = 512
@@ -55,10 +55,9 @@ def load_targets(path):
 def get_spectrogram_feature(filepath):
     y, sr = librosa.load(filepath)
     mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=N_MFCC)
-    # mfcc_delta = librosa.feature.delta(mfcc)
-    # mfcc_delta_delta = librosa.feature.delta(mfcc, order=2)
-    # result = np.concatenate((mfcc, mfcc_delta, mfcc_delta_delta), axis=0).T
-    result = mfcc.T
+    mfcc_delta = librosa.feature.delta(mfcc)
+    mfcc_delta_delta = librosa.feature.delta(mfcc, order=2)
+    result = np.concatenate((mfcc, mfcc_delta, mfcc_delta_delta), axis=0).T
     return torch.FloatTensor(result)
 
 def get_script(script, bos_id, eos_id):
