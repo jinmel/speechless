@@ -218,7 +218,7 @@ def save_model(model, optimizer, path):
     }
     torch.save(state, path)
 
-def bind_model(model, optimizer=None):
+def bind_model(model, optimizer=None, feature='spec'):
     def load(filename, **kwargs):
         state = torch.load(os.path.join(filename, 'model.pt'))
         model.load_state_dict(state['model'])
@@ -237,7 +237,15 @@ def bind_model(model, optimizer=None):
         model.eval()
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-        input = get_spectrogram_feature(wav_path, False).unsqueeze(0)
+        if feature == 'spec':
+            input = get_spectrogram_feature(wav_path, False).unsqueeze(0)
+        elif feature == 'mfcc':
+            input = get_mfcc_feature(wav_path, False).unsqueeze(0)
+        elif feature == 'melspec':
+            input = get_mel_spectrogram_feature(wav_path, False).unsqueeze(0)
+        else:
+            raise ValueError('invalid feature %s' % feature)
+
         input = input.to(device)
 
         logit = model(input_variable=input, input_lengths=None, teacher_forcing_ratio=0)
@@ -295,7 +303,8 @@ def main():
     parser.add_argument("--pause", type=int, default=0)
     parser.add_argument('--rnn_cell', type=str, default='gru')
     parser.add_argument("--iteration", type=int, default=0)
-    parser.add_argument('--feature', type=str, default='mfcc')
+    parser.add_argument('--feature', type=str, default='spec')
+    parser.add_argument('--save_dir', type=str, default='')
 
     args = parser.parse_args()
 
@@ -343,7 +352,7 @@ def main():
     optimizer = optim.Adam(model.module.parameters(), lr=args.lr)
     criterion = nn.CrossEntropyLoss(reduction='sum', ignore_index=PAD_token).to(device)
 
-    bind_model(model, optimizer)
+    bind_model(model, optimizer, args.feature)
     # nsml.load(checkpoint='best', session='team236/sr-hack-2019-dataset/114')
 
     if args.pause == 1:
@@ -359,7 +368,6 @@ def main():
     with open(data_list, 'r') as f:
         for line in f:
             # line: "aaa.wav,aaa.label"
-
             wav_path, script_path = line.strip().split(',')
             wav_paths.append(os.path.join(DATASET_PATH, 'train_data', wav_path))
             script_paths.append(os.path.join(DATASET_PATH, 'train_data', script_path))
@@ -395,18 +403,21 @@ def main():
         logger.info('Epoch %d (Evaluate) Loss %0.4f CER %0.4f' % (epoch, eval_loss, eval_cer))
 
         nsml.report(False,
-            step=epoch, train_epoch__loss=train_loss, train_epoch__cer=train_cer,
-            eval__loss=eval_loss, eval__cer=eval_cer)
+                    step=epoch, train_epoch__loss=train_loss,
+                    train_epoch__cer=train_cer,
+                    eval__loss=eval_loss, eval__cer=eval_cer)
 
         best_model = (eval_loss < best_loss)
         nsml.save(args.save_name)
         nsml.save(str(epoch))
-        save_model(model, optimizer,
-                   './models/epoch-%d-cer-%d.pt' % (epoch, eval_cer))
+
+        if args.save_dir:
+            save_model(model, optimizer,
+                       os.path.join(args.save_dir,
+                                    './epoch-%d-cer-%d.pt' % (epoch, eval_cer)))
 
         if best_model:
             nsml.save('best')
-            save_model(model, optimizer, './models/best.pt')
             best_loss = eval_loss
 
 
