@@ -321,6 +321,9 @@ def main():
     device = torch.device('cuda' if args.cuda else 'cpu')
 
     logger.info('Using %s as feature' % args.feature)
+    if args.save_dir:
+        logger.info('Save directory: %s' % args.save_dir)
+        os.makedirs(args.save_dir)
 
     # N_FFT: defined in loader.py
     if args.feature == 'mfcc':
@@ -353,7 +356,7 @@ def main():
     criterion = nn.CrossEntropyLoss(reduction='sum', ignore_index=PAD_token).to(device)
 
     bind_model(model, optimizer, args.feature)
-    # nsml.load(checkpoint='best', session='team236/sr-hack-2019-dataset/114')
+    # nsml.load(checkpoint='24', session='team236/sr-hack-2019-dataset/120')
 
     if args.pause == 1:
         nsml.paused(scope=locals())
