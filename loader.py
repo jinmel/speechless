@@ -38,7 +38,7 @@ FORMAT = "[%(asctime)s %(filename)s:%(lineno)s - %(funcName)s()] %(message)s"
 logging.basicConfig(stream=sys.stdout, level=logging.DEBUG, format=FORMAT)
 logger.setLevel(logging.DEBUG)
 
-CACHE_DIR = './cache.%d' % int(time.time())
+CACHE_DIR = './cache'
 memory = Memory(CACHE_DIR, verbose=0)
 
 PAD = 0

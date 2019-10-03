@@ -211,6 +211,13 @@ def evaluate(model, dataloader, criterion, device):
     logger.info('evaluate() completed')
     return total_loss / total_num, total_dist / total_length
 
+def save_model(model, optimizer, path):
+    state = {
+        'model': model.state_dict(),
+        'optimizer': optimizer.state_dict()
+    }
+    torch.save(state, path)
+
 def bind_model(model, optimizer=None):
     def load(filename, **kwargs):
         state = torch.load(os.path.join(filename, 'model.pt'))
@@ -394,13 +401,13 @@ def main():
         best_model = (eval_loss < best_loss)
         nsml.save(args.save_name)
         nsml.save(str(epoch))
+        save_model(model, optimizer,
+                   './models/epoch-%d-cer-%d.pt' % (epoch, eval_cer))
 
         if best_model:
             nsml.save('best')
+            save_model(model, optimizer, './models/best.pt')
             best_loss = eval_loss
-
-        if (epoch + 1) % 5 == 0:
-            clear_joblib_cache()
 
 
 if __name__ == "__main__":
