@@ -79,8 +79,10 @@ def load_randomly_augmented_audio(path, sample_rate=SAMPLE_RATE,
                                    tempo=tempo_value, gain=gain_value)
     return audio
 
-def load_audio(path):
-    return load_randomly_augmented_audio(path), SAMPLE_RATE
+def load_audio(path, augment=False):
+    if augment:
+        return load_randomly_augmented_audio(path), SAMPLE_RATE
+    return librosa.load(path)
 
 def load_targets(path):
     target_dict = dict()
@@ -90,16 +92,16 @@ def load_targets(path):
             target_dict[key] = target
     return target_dict
 
-def get_mfcc_feature(filepath):
-    y, sr = load_audio(filepath)
+def get_mfcc_feature(filepath, augment=False):
+    y, sr = load_audio(filepath, augment)
     mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=N_MFCC)
     mfcc_delta = librosa.feature.delta(mfcc)
     mfcc_delta_delta = librosa.feature.delta(mfcc, order=2)
     result = np.concatenate((mfcc, mfcc_delta, mfcc_delta_delta), axis=0).T
     return torch.FloatTensor(result)
 
-def get_mel_spectrogram_feature(filepath):
-    y, sr = load_audio(filepath)
+def get_mel_spectrogram_feature(filepath, augment=False):
+    y, sr = load_audio(filepath, augment)
     mel_spec = librosa.feature.melspectrogram(y=y, sr=sr, n_mels=N_MELS,
                                               n_fft=N_FFT,
                                               win_length=int(N_FFT),
@@ -108,8 +110,8 @@ def get_mel_spectrogram_feature(filepath):
                                               window='hamming')
     return torch.FloatTensor(mel_spec.T)
 
-def get_spectrogram_feature(filepath):
-    y, sr = load_audio(filepath)
+def get_spectrogram_feature(filepath, augment=False):
+    y, sr = load_audio(filepath, augment)
     D = librosa.stft(y, n_fft=N_FFT, hop_length=int(0.01*SAMPLE_RATE),
                      win_length=int(N_FFT), window='hamming')
     spect, phase = librosa.magphase(D)
@@ -163,12 +165,25 @@ class BaseDataset(Dataset):
         else:
             raise ValueError('Unsupported feature: %s' % self.feature)
 
-        return memory.cache(get_feature)
+        return get_feature
 
     def getitem(self, idx):
         get_feature = self.get_feature_func()
+        get_feature_cache = memory.cache(get_feature)
         get_script_cache = memory.cache(get_script)
-        feat = get_feature(self.wav_paths[idx])
+        feat = get_feature_cache(self.wav_paths[idx], False)
+        if self.normalize:
+            feat = normalize_feature(feat)
+        key = self.script_paths[idx].split('/')[-1].split('.')[0]
+        script = get_script_cache(self.target_dict[key],
+                                  self.bos_id, self.eos_id)
+        return feat, script
+
+class SpecaugDataset(BaseDataset):
+    def getitem(self, idx):
+        get_feature = self.get_feature_func()
+        get_script_cache = memory.cache(get_script)
+        feat = get_feature(self.wav_paths[idx], True)
         if self.normalize:
             feat = normalize_feature(feat)
         key = self.script_paths[idx].split('/')[-1].split('.')[0]
@@ -209,119 +224,3 @@ def collate_fn(batch):
         targets[x].narrow(0, 0, len(target)).copy_(torch.LongTensor(target))
 
     return seqs, targets, seq_lengths, target_lengths
-
-class BaseDataLoader(threading.Thread):
-    def __init__(self, dataset, queue, batch_size, thread_id):
-        threading.Thread.__init__(self)
-        self.collate_fn = collate_fn
-        self.dataset = dataset
-        self.queue = queue
-        self.index = 0
-        self.batch_size = batch_size
-        self.dataset_count = dataset.count()
-        self.thread_id = thread_id
-
-    def count(self):
-        return math.ceil(self.dataset_count / self.batch_size)
-
-    def create_empty_batch(self):
-        seqs = torch.zeros(0, 0, 0)
-        targets = torch.zeros(0, 0).to(torch.long)
-        seq_lengths = list()
-        target_lengths = list()
-        return seqs, targets, seq_lengths, target_lengths
-
-    def run(self):
-        logger.debug('loader %d start' % (self.thread_id))
-        def _get_item(dataset, index):
-            return dataset.getitem(index)
-
-        while True:
-            items = list()
-
-            for i in range(self.batch_size):
-                if self.index >= self.dataset_count:
-                    break
-
-                items.append(self.dataset.getitem(self.index))
-                self.index += 1
-
-            if len(items) == 0:
-                batch = self.create_empty_batch()
-                self.queue.put(batch)
-                break
-
-            random.shuffle(items)
-
-            batch = self.collate_fn(items)
-            self.queue.put(batch)
-        logger.debug('loader %d stop' % (self.thread_id))
-
-class MultiLoader():
-    def __init__(self, dataset_list, queue, batch_size, worker_size):
-        self.dataset_list = dataset_list
-        self.queue = queue
-        self.batch_size = batch_size
-        self.worker_size = worker_size
-        self.loader = list()
-
-        for i in range(self.worker_size):
-            self.loader.append(BaseDataLoader(self.dataset_list[i], self.queue, self.batch_size, i))
-
-    def start(self):
-        for i in range(self.worker_size):
-            self.loader[i].start()
-
-    def join(self):
-        for i in range(self.worker_size):
-            self.loader[i].join()
-
-
-def create_empty_batch():
-    seqs = torch.zeros(0, 0, 0)
-    targets = torch.zeros(0, 0).to(torch.long)
-    seq_lengths = list()
-    target_lengths = list()
-    return seqs, targets, seq_lengths, target_lengths
-
-
-def get_batch_from_dataset(dataset, start_index, batch_size):
-    items = list()
-    end_index = min(start_index + batch_size, dataset.count())
-    for index in range(start_index, end_index):
-        items.append(dataset.getitem(index))
-
-    random.shuffle(items)
-    return collate_fn(items)
-
-
-class ConcurrentFuturesLoader(threading.Thread):
-    def __init__(self, dataset_list, queue, batch_size, worker_size):
-        threading.Thread.__init__(self)
-        self.dataset_list = dataset_list
-        self.queue = queue
-        self.batch_size = batch_size
-        self.worker_size = worker_size
-
-    def run(self):
-        logger.info('Begin generating batches.')
-        total_batch = 0
-        futures = []
-        executor = concurrent.futures.ProcessPoolExecutor(
-            max_workers=self.worker_size)
-
-        for dataset in self.dataset_list:
-            for i in range(0, dataset.count(), self.batch_size):
-                futures.append(executor.submit(get_batch_from_dataset,
-                                               dataset, i, self.batch_size))
-        for future in concurrent.futures.as_completed(futures):
-            try:
-                batch = future.result()
-                self.queue.put(batch)
-                total_batch += 1
-            except Exception as error:
-                logger.info(error)
-
-        self.queue.put(create_empty_batch())
-        logger.info('%d batches generated' % total_batch)
-        logger.info('End generating batches.')

@@ -230,7 +230,7 @@ def bind_model(model, optimizer=None):
         model.eval()
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-        input = get_spectrogram_feature(wav_path).unsqueeze(0)
+        input = get_spectrogram_feature(wav_path, False).unsqueeze(0)
         input = input.to(device)
 
         logit = model(input_variable=input, input_lengths=None, teacher_forcing_ratio=0)
@@ -252,9 +252,9 @@ def split_dataset(config, wav_paths, script_paths, target_dict, feature, valid_r
 
     split_index = train_batch_num * config.batch_size
 
-    train_dataset = BaseDataset(wav_paths[:split_index],
-                                script_paths[:split_index],
-                                target_dict, feature, SOS_token, EOS_token)
+    train_dataset = SpecaugDataset(wav_paths[:split_index],
+                                   script_paths[:split_index],
+                                   target_dict, feature, SOS_token, EOS_token)
     valid_dataset = BaseDataset(wav_paths[split_index:],
                                 script_paths[split_index:],
                                 target_dict, feature, SOS_token, EOS_token)
