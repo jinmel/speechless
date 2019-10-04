@@ -32,6 +32,7 @@ from torch.utils.data import Dataset
 from joblib import Memory
 import tempfile
 import shutil
+import specaug
 
 logger = logging.getLogger('root')
 FORMAT = "[%(asctime)s %(filename)s:%(lineno)s - %(funcName)s()] %(message)s"
@@ -182,10 +183,12 @@ class BaseDataset(Dataset):
 class SpecaugDataset(BaseDataset):
     def getitem(self, idx):
         get_feature = self.get_feature_func()
+        get_feature_cache = memory.cache(get_feature)
         get_script_cache = memory.cache(get_script)
-        feat = get_feature(self.wav_paths[idx], True)
+        feat = get_feature_cache(self.wav_paths[idx], False)
         if self.normalize:
             feat = normalize_feature(feat)
+        feat = specaug.do_spec_aug(feat)
         key = self.script_paths[idx].split('/')[-1].split('.')[0]
         script = get_script_cache(self.target_dict[key],
                                   self.bos_id, self.eos_id)

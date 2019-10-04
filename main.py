@@ -203,7 +203,7 @@ def evaluate(model, dataloader, criterion, device):
             total_num += sum(feat_lengths)
 
             display = random.randrange(0, 100) == 0
-            dist, length = get_distance(target, y_hat, display=display)
+            dist, length = get_distance(target, y_hat, display=True)
             total_dist += dist
             total_length += length
             total_sent_num += target.size(0)
@@ -246,6 +246,7 @@ def bind_model(model, optimizer=None, feature='spec'):
         else:
             raise ValueError('invalid feature %s' % feature)
 
+        input = normalize_feature(input)
         input = input.to(device)
 
         logit = model(input_variable=input, input_lengths=None, teacher_forcing_ratio=0)
@@ -253,7 +254,6 @@ def bind_model(model, optimizer=None, feature='spec'):
 
         y_hat = logit.max(-1)[1]
         hyp = label_to_string(y_hat)
-
         return hyp[0]
 
     nsml.bind(save=save, load=load, infer=infer) # 'nsml.bind' function must be called at the end.
@@ -323,7 +323,7 @@ def main():
     logger.info('Using %s as feature' % args.feature)
     if args.save_dir:
         logger.info('Save directory: %s' % args.save_dir)
-        os.makedirs(args.save_dir)
+        os.makedirs(args.save_dir, exist_ok=True)
 
     # N_FFT: defined in loader.py
     if args.feature == 'mfcc':
@@ -356,7 +356,10 @@ def main():
     criterion = nn.CrossEntropyLoss(reduction='sum', ignore_index=PAD_token).to(device)
 
     bind_model(model, optimizer, args.feature)
-    # nsml.load(checkpoint='24', session='team236/sr-hack-2019-dataset/120')
+    if args.pause != 1:
+        nsml.load(checkpoint='10', session='team236/sr-hack-2019-dataset/122')
+        nsml.save('init')
+        logger.info('Saved!')
 
     if args.pause == 1:
         nsml.paused(scope=locals())
@@ -367,6 +370,9 @@ def main():
     data_list = os.path.join(DATASET_PATH, 'train_data', 'data_list.csv')
     wav_paths = list()
     script_paths = list()
+    # load all target scripts for reducing disk i/o
+    target_path = os.path.join(DATASET_PATH, 'train_label')
+    target_dict = load_targets(target_path)
 
     with open(data_list, 'r') as f:
         for line in f:
@@ -377,10 +383,6 @@ def main():
 
     best_loss = 1e10
     begin_epoch = 0
-
-    # load all target scripts for reducing disk i/o
-    target_path = os.path.join(DATASET_PATH, 'train_label')
-    target_dict = load_targets(target_path)
 
     train_dataset, valid_dataset = split_dataset(
         args, wav_paths, script_paths, target_dict, args.feature, valid_ratio=0.05)
